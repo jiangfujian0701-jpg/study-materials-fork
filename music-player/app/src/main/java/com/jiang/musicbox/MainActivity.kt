@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 MusicHome(
-                    tracks = visibleTracks(), allCount = tracks.size, tab = activeTab, currentUri = currentUri,
+                    tracks = visibleTracks(), playingTrack = tracks.firstOrNull { it.uri == currentUri }, allCount = tracks.size, tab = activeTab, currentUri = currentUri,
                     playing = playing, position = currentPosition, duration = currentDuration,
                     playlists = playlistNames, selectedPlaylist = selectedPlaylist,
                     onTab = { activeTab = it; selectedPlaylist = null },
@@ -144,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     onToggle = { if (player.isPlaying) player.pause() else player.play() },
                     onNext = { skip(1) }, onPrevious = { skip(-1) },
                     onSeek = { player.seekTo(it) },
-                    onFavorite = { db.toggleFavorite(it.uri); refreshSavedLists() },
+                    onFavorite = { db.toggleFavorite(it.uri); scan() },
                     onCategory = { track, category -> db.setCategory(track.uri, category); scan() },
                     onCreatePlaylist = { name -> db.createPlaylist(name); refreshSavedLists() },
                     onAddPlaylist = { track, name -> db.addToPlaylist(name, track.uri) },
@@ -223,7 +223,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun MusicHome(
-    tracks: List<Track>, allCount: Int, tab: String, currentUri: String?, playing: Boolean,
+    tracks: List<Track>, playingTrack: Track?, allCount: Int, tab: String, currentUri: String?, playing: Boolean,
     position: Long, duration: Long, playlists: List<String>, selectedPlaylist: String?,
     onTab: (String) -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onToggle: () -> Unit,
     onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit,
@@ -236,7 +236,7 @@ private fun MusicHome(
     var addingTrack by remember { mutableStateOf<Track?>(null) }
     var targetTime by remember { mutableFloatStateOf(position.toFloat()) }
     var dragging by remember { mutableStateOf(false) }
-    val current = tracks.firstOrNull { it.uri == currentUri }
+    val current = playingTrack
     Scaffold(
         containerColor = Color(0xFF0B1010),
         bottomBar = {
