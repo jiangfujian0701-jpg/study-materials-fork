@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
     private val playlistNames = mutableStateListOf<String>()
     private var currentUri by mutableStateOf<String?>(null)
     private var playing by mutableStateOf(false)
+    private var playMode by mutableStateOf("列表循环")
     private var currentPosition by mutableLongStateOf(0L)
     private var currentDuration by mutableLongStateOf(1L)
     private var activeTab by mutableStateOf("全部")
@@ -118,6 +119,8 @@ class MainActivity : ComponentActivity() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 currentUri = mediaItem?.localConfiguration?.uri?.toString()
                 currentDuration = player.duration.coerceAtLeast(1L)
+                currentUri?.let { db.played(it) }
+                refreshSavedLists()
             }
         })
         refreshSavedLists()
@@ -137,12 +140,13 @@ class MainActivity : ComponentActivity() {
                 MusicHome(
                     tracks = visibleTracks(), playingTrack = tracks.firstOrNull { it.uri == currentUri }, allCount = tracks.size, tab = activeTab, currentUri = currentUri,
                     playing = playing, position = currentPosition, duration = currentDuration,
-                    playlists = playlistNames, selectedPlaylist = selectedPlaylist,
+                    playMode = playMode, playlists = playlistNames, selectedPlaylist = selectedPlaylist,
                     onTab = { activeTab = it; selectedPlaylist = null },
                     onScan = { if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) scan() else permissionLauncher.launch(permission) },
                     onPlay = { play(it) },
                     onToggle = { if (player.isPlaying) player.pause() else player.play() },
                     onNext = { skip(1) }, onPrevious = { skip(-1) },
+                    onMode = { cyclePlayMode() },
                     onSeek = { player.seekTo(it) },
                     onFavorite = { db.toggleFavorite(it.uri); scan() },
                     onCategory = { track, category -> db.setCategory(track.uri, category); scan() },
@@ -195,23 +199,55 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun play(track: Track) {
-        val uri = android.net.Uri.parse(track.uri)
-        if (currentUri == track.uri && player.mediaItemCount > 0) { player.play(); return }
-        player.setMediaItem(MediaItem.fromUri(uri))
-        player.prepare()
+        if (currentUri == track.uri && player.mediaItemCount > 0) {
+            player.play()
+            return
+        }
+        val queue = visibleTracks().ifEmpty { tracks.toList() }
+        val orderedQueue = if (queue.any { it.uri == track.uri }) queue else queue + track
+        val startIndex = orderedQueue.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
         val saved = db.state(track.uri).position
-        if (saved > 0 && saved < track.duration - 5000) player.seekTo(saved)
-        player.play()
+        val startPosition = if (saved > 0 && saved < track.duration - 5000) saved else 0L
         currentUri = track.uri
-        db.played(track.uri)
-        refreshSavedLists()
+        player.setMediaItems(orderedQueue.map { MediaItem.fromUri(android.net.Uri.parse(it.uri)) }, startIndex, startPosition)
+        applyPlayMode()
+        player.prepare()
+        player.play()
+    }
+
+    private fun cyclePlayMode() {
+        playMode = when (playMode) {
+            "列表循环" -> "单曲循环"
+            "单曲循环" -> "随机播放"
+            else -> "列表循环"
+        }
+        applyPlayMode()
+    }
+
+    private fun applyPlayMode() {
+        when (playMode) {
+            "单曲循环" -> {
+                player.repeatMode = Player.REPEAT_MODE_ONE
+                player.shuffleModeEnabled = false
+            }
+            "随机播放" -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = true
+            }
+            else -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = false
+            }
+        }
     }
 
     private fun skip(direction: Int) {
-        val list = visibleTracks()
-        val index = list.indexOfFirst { it.uri == currentUri }
-        val next = if (index < 0) 0 else (index + direction + list.size) % list.size
-        if (list.isNotEmpty()) play(list[next])
+        if (player.mediaItemCount == 0) {
+            val list = visibleTracks()
+            if (list.isNotEmpty()) play(if (direction > 0) list.first() else list.last())
+            return
+        }
+        if (direction > 0) player.seekToNextMediaItem() else player.seekToPreviousMediaItem()
     }
 
     override fun onPause() {
@@ -224,9 +260,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MusicHome(
     tracks: List<Track>, playingTrack: Track?, allCount: Int, tab: String, currentUri: String?, playing: Boolean,
-    position: Long, duration: Long, playlists: List<String>, selectedPlaylist: String?,
+    position: Long, duration: Long, playMode: String, playlists: List<String>, selectedPlaylist: String?,
     onTab: (String) -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onToggle: () -> Unit,
-    onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit,
+    onNext: () -> Unit, onPrevious: () -> Unit, onMode: () -> Unit, onSeek: (Long) -> Unit,
     onFavorite: (Track) -> Unit, onCategory: (Track, String) -> Unit,
     onCreatePlaylist: (String) -> Unit, onAddPlaylist: (Track, String) -> Unit, onOpenPlaylist: (String) -> Unit
 ) {
@@ -252,6 +288,17 @@ private fun MusicHome(
                                 IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "上一首", tint = Color.White) }
                                 IconButton(onClick = onToggle) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, "播放暂停", tint = Color(GREEN)) }
                                 IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "下一首", tint = Color.White) }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    IconButton(onClick = onMode) {
+                                        val modeIcon = when (playMode) {
+                                            "单曲循环" -> Icons.Default.RepeatOne
+                                            "随机播放" -> Icons.Default.Shuffle
+                                            else -> Icons.Default.Repeat
+                                        }
+                                        Icon(modeIcon, "播放模式：$playMode", tint = Color(GREEN))
+                                    }
+                                    Text(playMode, color = Color.LightGray, fontSize = 9.sp)
+                                }
                             }
                             Slider(value = (if (dragging) targetTime else position.toFloat()).coerceIn(0f, duration.coerceAtLeast(1L).toFloat()), onValueChange = { targetTime = it; dragging = true }, onValueChangeFinished = { onSeek(targetTime.toLong()); dragging = false }, valueRange = 0f..duration.coerceAtLeast(1L).toFloat())
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
