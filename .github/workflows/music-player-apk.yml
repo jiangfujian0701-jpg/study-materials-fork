@@ -2,6 +2,10 @@ name: Jiang Music Android APK
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "music-player/**"
+      - ".github/workflows/music-player-apk.yml"
 
 permissions:
   contents: read
