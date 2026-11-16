@@ -15,6 +15,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,7 +43,7 @@ private val categories = listOf("歌曲", "音声", "有声书", "播客", "其�
 
 data class Track(
     val id: Long, val title: String, val artist: String, val album: String,
-    val duration: Long, val uri: String, val category: String
+    val duration: Long, val uri: String, val category: String, val favorite: Boolean
 )
 
 class MusicDatabase(context: Context) : SQLiteOpenHelper(context, "jiang_music.db", null, 1) {
@@ -167,7 +169,7 @@ class MainActivity : ComponentActivity() {
                 val state = db.state(fileUri)
                 val rawTitle = c.getString(title)?.takeIf { it.isNotBlank() } ?: "未知文件"
                 val inferred = state.category ?: if (rawTitle.contains("朗读") || rawTitle.contains("对白") || rawTitle.contains("Drama", true)) "音声" else "待识别"
-                found.add(Track(c.getLong(id), rawTitle, c.getString(artist)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "未知艺术家", c.getString(album) ?: "", c.getLong(duration), fileUri, inferred))
+                found.add(Track(c.getLong(id), rawTitle, c.getString(artist)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "未知艺术家", c.getString(album) ?: "", c.getLong(duration), fileUri, inferred, state.favorite))
             }
         }
         tracks.clear(); tracks.addAll(found)
@@ -279,7 +281,7 @@ private fun MusicHome(
                 if (tab == "歌单") IconButton(onClick = { creatingPlaylist = true }) { Icon(Icons.Default.Add, "新建歌单", tint = Color(GREEN)) }
             }
             if (tab == "全部") {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     categories.forEach { category ->
                         FilterChip(selected = false, onClick = { onTab(category) }, label = { Text(category, fontSize = 11.sp) })
                     }
@@ -302,7 +304,7 @@ private fun MusicHome(
                                 Text(track.title, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${track.artist} · ${track.category} · ${timeText(track.duration)}", color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = { onFavorite(track) }) { Icon(Icons.Default.Favorite, "收藏", tint = Color.Gray) }
+                            IconButton(onClick = { onFavorite(track) }) { Icon(Icons.Default.Favorite, "收藏", tint = if (track.favorite) Color(0xFFFF6B8A) else Color.Gray) }
                             Box {
                                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
                                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
