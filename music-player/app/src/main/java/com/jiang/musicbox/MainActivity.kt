@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,7 +80,9 @@ class MainActivity : ComponentActivity() {
                     onPlay = { playSong(it) },
                     onToggle = { if (player.isPlaying) player.pause() else player.play() },
                     onNext = { if (songs.isNotEmpty()) playSong((currentIndex + 1).mod(songs.size)) },
-                    onPrevious = { if (songs.isNotEmpty()) playSong(if (currentIndex <= 0) songs.lastIndex else currentIndex - 1) }
+                    onPrevious = { if (songs.isNotEmpty()) playSong(if (currentIndex <= 0) songs.lastIndex else currentIndex - 1) },
+                    onSeek = { player.seekTo(it) },
+                    onPosition = { player.currentPosition }
                 )
             }
         }
@@ -139,9 +142,19 @@ private fun MusicHome(
     onPlay: (Int) -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
-    onPrevious: () -> Unit
+    onPrevious: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onPosition: () -> Long
 ) {
     val current = songs.getOrNull(currentIndex)
+    var sliderPosition by remember(currentIndex) { mutableFloatStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(currentIndex, isPlaying) {
+        while (current != null) {
+            if (!isDragging) sliderPosition = onPosition().coerceIn(0L, current.duration.coerceAtLeast(1L)).toFloat()
+            delay(350)
+        }
+    }
     Scaffold(
         containerColor = Color(0xFF0B1010),
         bottomBar = {
@@ -159,6 +172,28 @@ private fun MusicHome(
                                 Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "播放暂停", tint = Color(0xFF78D6B0))
                             }
                             IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "下一首", tint = Color.White) }
+                        }
+                        Slider(
+                            value = sliderPosition.coerceIn(0f, current.duration.coerceAtLeast(1L).toFloat()),
+                            onValueChange = {
+                                isDragging = true
+                                sliderPosition = it
+                            },
+                            onValueChangeFinished = {
+                                onSeek(sliderPosition.toLong())
+                                isDragging = false
+                            },
+                            valueRange = 0f..current.duration.coerceAtLeast(1L).toFloat(),
+                            modifier = Modifier.fillMaxWidth().height(28.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFF78D6B0),
+                                activeTrackColor = Color(0xFF78D6B0),
+                                inactiveTrackColor = Color(0xFF40504B)
+                            )
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(formatDuration(sliderPosition.toLong()), color = Color.LightGray, fontSize = 10.sp)
+                            Text(formatDuration(current.duration), color = Color.LightGray, fontSize = 10.sp)
                         }
                     }
                 }
