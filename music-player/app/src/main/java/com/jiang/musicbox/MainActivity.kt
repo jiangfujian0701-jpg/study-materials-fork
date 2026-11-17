@@ -437,7 +437,7 @@ class MainActivity : ComponentActivity() {
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
-                onClearWallpaper = ::clearWallpaper,
+                onClearWallpaper = ::resetWallpaper,
                 hiddenTracks = hiddenList.toList(),
                 onLoadHidden = ::loadHidden,
                 onRestore = ::restoreHidden,
