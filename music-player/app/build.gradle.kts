@@ -12,8 +12,8 @@ android {
         applicationId = "com.jiang.musicbox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     buildFeatures { compose = true }
     compileOptions {
@@ -33,4 +33,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
+    implementation("androidx.media3:media3-session:1.5.1")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 }
