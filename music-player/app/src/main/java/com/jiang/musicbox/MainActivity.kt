@@ -91,6 +91,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -194,7 +195,7 @@ class MainActivity : ComponentActivity() {
     private fun setThemeMode(v: String) { themeMode = v; prefs.edit().putString("themeMode", v).apply() }
     private fun setRefreshRate(v: String) { refreshRatePref = v; prefs.edit().putString("refreshRate", v).apply(); applyRefreshRate(v) }
     private fun setTitleSource(v: String) { titleSource = v; prefs.edit().putString("titleSource", v).apply(); scan() }
-    private fun clearWallpaper() {
+    private fun resetWallpaper() {
         wallpaperPath?.let { File(it).delete() }
         wallpaperPath = null
         prefs.edit().remove("wallpaper").apply()
@@ -365,7 +366,8 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun Root() {
         AppTheme(themeMode, accentName) {
-            val scaled = LocalDensity.current.copy(fontScale = fontScale)
+            val base = LocalDensity.current
+            val scaled = Density(base.density, fontScale)
             CompositionLocalProvider(scaled) {
                 val scheme = MaterialTheme.colorScheme
                 Box(Modifier.fillMaxSize()) {
