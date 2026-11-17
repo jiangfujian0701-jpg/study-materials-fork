@@ -44,7 +44,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession {
-        mediaSession?.let { if (it.isActive) return it }
+        // 服务存活时复用已有会话（同一播放器实例，队列不丢）
+        mediaSession?.let { return it }
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
