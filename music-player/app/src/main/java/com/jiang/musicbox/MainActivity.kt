@@ -3,10 +3,14 @@ package com.jiang.musicbox
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
+import android.view.Display
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,6 +51,7 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -71,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,6 +90,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,32 +104,41 @@ import com.jiang.musicbox.data.Categories
 import com.jiang.musicbox.data.Library
 import com.jiang.musicbox.data.MusicDatabase
 import com.jiang.musicbox.data.Track
+import com.jiang.musicbox.ui.AppTheme
+import com.jiang.musicbox.ui.LocalAccent
 import com.jiang.musicbox.ui.PlaybackConnection
 import com.jiang.musicbox.ui.PlayerScreen
+import com.jiang.musicbox.ui.SettingsScreen
 import com.jiang.musicbox.ui.fmtSleep
 import com.jiang.musicbox.ui.fmtTime
+import java.io.File
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val BG = Color(0xFF0B1010)
-private val SURFACE = Color(0xFF151D1C)
-private val GREEN = Color(0xFF78D6B0)
-
-private enum class Sort(val label: String) {
-    TITLE("标题"), ARTIST("艺术家"), ALBUM("专辑"), DURATION("时长"),
-    RECENT_PLAYED("最近播放"), RECENT_ADDED("最近添加"), PLAYS("播放次数"),
-}
+private val PINK = Color(0xFFFF6B8A)
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var db: MusicDatabase
     private lateinit var connection: PlaybackConnection
+    private val prefs by lazy { getSharedPreferences("jiang_settings", Context.MODE_PRIVATE) }
 
     private val tracks = mutableStateListOf<Track>()
     private val playlistNames = mutableStateListOf<String>()
+    private val hiddenList = mutableStateListOf<Track>()
 
+    /* ── 设置状态（SharedPreferences 持久化） ── */
+    private var fontScale by mutableStateOf(1.0f)
+    private var accentName by mutableStateOf("黛绿")
+    private var themeMode by mutableStateOf("system")
+    private var refreshRatePref by mutableStateOf("max")
+    private var titleSource by mutableStateOf("metadata")
+    private var wallpaperPath by mutableStateOf<String?>(null)
+
+    /* ── 界面状态 ── */
     private var activeTab by mutableStateOf("全部")
     private var selectedPlaylist by mutableStateOf<String?>(null)
     private var selectedGroup by mutableStateOf<Pair<String, String>?>(null)
@@ -131,10 +147,15 @@ class MainActivity : ComponentActivity() {
     private var sortMode by mutableStateOf(Sort.TITLE)
     private var playerExpanded by mutableStateOf(false)
     private var sleepRemaining by mutableStateOf<Long?>(null)
+    private var showSettings by mutableStateOf(false)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) scan() }
+
+    private val wallpaperLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) saveWallpaper(uri) }
 
     private val audioPermission: String =
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
@@ -147,25 +168,112 @@ class MainActivity : ComponentActivity() {
         connection.connect()
         crashLog = JiangMusicApp.readCrashLog(this)
 
+        fontScale = prefs.getFloat("fontScale", 1.0f)
+        accentName = prefs.getString("accent", "黛绿") ?: "黛绿"
+        themeMode = prefs.getString("themeMode", "system") ?: "system"
+        refreshRatePref = prefs.getString("refreshRate", "max") ?: "max"
+        titleSource = prefs.getString("titleSource", "metadata") ?: "metadata"
+        wallpaperPath = prefs.getString("wallpaper", null)
+        applyRefreshRate(refreshRatePref)
+
         if (ContextCompat.checkSelfPermission(this, audioPermission) == PackageManager.PERMISSION_GRANTED) {
             scan()
         }
-        setContent {
-            MaterialTheme(
-                colorScheme = MaterialTheme.colorScheme.copy(
-                    primary = GREEN, background = BG, surface = SURFACE,
-                )
-            ) { AppRoot() }
+        setContent { Root() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyRefreshRate(refreshRatePref)
+    }
+
+    /* ── 设置读写 ── */
+
+    private fun setFontScale(v: Float) { fontScale = v; prefs.edit().putFloat("fontScale", v).apply() }
+    private fun setAccent(v: String) { accentName = v; prefs.edit().putString("accent", v).apply() }
+    private fun setThemeMode(v: String) { themeMode = v; prefs.edit().putString("themeMode", v).apply() }
+    private fun setRefreshRate(v: String) { refreshRatePref = v; prefs.edit().putString("refreshRate", v).apply(); applyRefreshRate(v) }
+    private fun setTitleSource(v: String) { titleSource = v; prefs.edit().putString("titleSource", v).apply(); scan() }
+    private fun clearWallpaper() {
+        wallpaperPath?.let { File(it).delete() }
+        wallpaperPath = null
+        prefs.edit().remove("wallpaper").apply()
+    }
+
+    private fun saveWallpaper(uri: android.net.Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val f = File(filesDir, "wallpaper.jpg")
+                contentResolver.openInputStream(uri)?.use { input ->
+                    f.outputStream().use { input.copyTo(it) }
+                } ?: return@launch
+                withContext(Dispatchers.Main) {
+                    wallpaperPath = f.absolutePath
+                    prefs.edit().putString("wallpaper", f.absolutePath).apply()
+                }
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) { toast("壁纸保存失败") }
+            }
         }
     }
 
+    /** 高性能手机默认把应用限在 60Hz，这里按用户选择直接锁定显示模式 */
+    private fun applyRefreshRate(pref: String) {
+        val display = (getSystemService(DISPLAY_SERVICE) as DisplayManager)
+            .getDisplay(Display.DEFAULT_DISPLAY) ?: return
+        val target = when (pref) {
+            "auto" -> return
+            "max" -> display.supportedModes.maxByOrNull { it.refreshRate }
+            else -> {
+                val want = pref.toFloatOrNull() ?: return
+                display.supportedModes.minByOrNull { abs(it.refreshRate - want) }
+            }
+        } ?: return
+        window?.attributes = window?.attributes?.apply { preferredDisplayModeId = target.modeId }
+    }
+
+    /* ── 媒体库 ── */
+
     private fun scan() {
+        val src = titleSource
         lifecycleScope.launch(Dispatchers.IO) {
-            val found = Library.scan(applicationContext, db)
+            val found = Library.scan(applicationContext, db, src)
             withContext(Dispatchers.Main) {
                 tracks.clear()
                 tracks.addAll(found)
                 refreshPlaylists()
+            }
+        }
+    }
+
+    private fun loadHidden() {
+        val src = titleSource
+        lifecycleScope.launch(Dispatchers.IO) {
+            val list = Library.scan(applicationContext, db, src, includeHidden = true).filter { it.hidden }
+            withContext(Dispatchers.Main) {
+                hiddenList.clear()
+                hiddenList.addAll(list)
+            }
+        }
+    }
+
+    private fun hideTrack(track: Track) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            db.setHidden(track.uri, true)
+            withContext(Dispatchers.Main) {
+                tracks.removeAll { it.uri == track.uri }
+                hiddenList.removeAll { it.uri == track.uri }
+                toast("已移出媒体库（本地文件未删除）")
+            }
+        }
+    }
+
+    private fun restoreHidden(track: Track) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            db.setHidden(track.uri, false)
+            withContext(Dispatchers.Main) {
+                hiddenList.removeAll { it.uri == track.uri }
+                scan()
             }
         }
     }
@@ -232,6 +340,14 @@ class MainActivity : ComponentActivity() {
     private fun currentTrack(): Track? =
         connection.nowPlayingUri?.let { uri -> tracks.firstOrNull { it.uri == uri } }
 
+    private fun playTrack(track: Track) {
+        val list = visibleTracks().ifEmpty { tracks.toList() }
+        connection.playOrToggle(list, track) { t -> db.state(t.uri).position }
+    }
+
+    private fun toast(msg: String) =
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+
     override fun onPause() {
         connection.nowPlayingUri?.let { db.savePosition(it, connection.position()) }
         super.onPause()
@@ -247,8 +363,32 @@ class MainActivity : ComponentActivity() {
     /* ══════════════════ UI ══════════════════ */
 
     @Composable
-    private fun AppRoot() {
-        // 播放进度轮询
+    private fun Root() {
+        AppTheme(themeMode, accentName) {
+            val scaled = LocalDensity.current.copy(fontScale = fontScale)
+            CompositionLocalProvider(scaled) {
+                val scheme = MaterialTheme.colorScheme
+                Box(Modifier.fillMaxSize()) {
+                    // 背景层：壁纸（垫半透明底保证可读）或纯主题色
+                    if (wallpaperPath != null) {
+                        AsyncImage(
+                            model = wallpaperPath,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        Box(Modifier.fillMaxSize().background(scheme.background.copy(alpha = 0.84f)))
+                    } else {
+                        Box(Modifier.fillMaxSize().background(scheme.background))
+                    }
+                    AppBody()
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun AppBody() {
         var position by remember { mutableLongStateOf(0L) }
         var duration by remember { mutableLongStateOf(1L) }
         LaunchedEffect(Unit) {
@@ -260,7 +400,6 @@ class MainActivity : ComponentActivity() {
                 delay(300)
             }
         }
-        // 睡眠定时倒计时
         LaunchedEffect(sleepRemaining) {
             val remain = sleepRemaining ?: return@LaunchedEffect
             if (remain <= 1000) {
@@ -272,29 +411,38 @@ class MainActivity : ComponentActivity() {
                 sleepRemaining = remain - 1000
             }
         }
-        // 回到前台时同步收藏/播放次数
         LaunchedEffect(Unit) {
             repeatOnLifecycle(Lifecycle.State.STARTED) { syncStates() }
         }
 
         val current = currentTrack()
         if (crashLog != null) CrashLogDialog()
-        if (playerExpanded) {
-            PlayerScreen(
-                track = current,
-                playing = connection.playing,
-                position = position,
-                duration = duration,
-                playMode = connection.playMode,
-                sleepRemaining = sleepRemaining,
-                onToggle = connection::togglePlay,
-                onNext = connection::next,
-                onPrevious = connection::previous,
-                onSeek = { connection.seekTo(it) },
-                onMode = connection::cycleMode,
-                onFavorite = { current?.let { toggleFavorite(it) } },
-                onSleepTimer = { showSleepDialog = true },
-                onClose = { playerExpanded = false },
+        if (showSettings) {
+            SettingsScreen(
+                fontScale = fontScale,
+                onFontScale = ::setFontScale,
+                accentName = accentName,
+                onAccent = ::setAccent,
+                themeMode = themeMode,
+                onThemeMode = ::setThemeMode,
+                refreshRate = refreshRatePref,
+                onRefreshRate = ::setRefreshRate,
+                titleSource = titleSource,
+                onTitleSource = ::setTitleSource,
+                hasWallpaper = wallpaperPath != null,
+                onPickWallpaper = {
+                    wallpaperLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onClearWallpaper = ::clearWallpaper,
+                hiddenTracks = hiddenList.toList(),
+                onLoadHidden = ::loadHidden,
+                onRestore = ::restoreHidden,
+                versionName = try {
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+                } catch (_: Exception) { "?" },
+                onBack = { showSettings = false },
             )
         } else {
             LibraryScaffold(current, position, duration)
@@ -313,7 +461,7 @@ class MainActivity : ComponentActivity() {
             text = {
                 Column {
                     if (sleepRemaining != null) {
-                        Text("剩余 ${fmtSleep(sleepRemaining!!)}", color = Color(0xFFFF6B8A))
+                        Text("剩余 ${fmtSleep(sleepRemaining!!)}", color = PINK)
                         Spacer(Modifier.height(8.dp))
                     }
                     Text("播完当前剩余时间后自动暂停")
@@ -340,10 +488,11 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun LibraryScaffold(current: Track?, position: Long, duration: Long) {
-        Scaffold(containerColor = BG, bottomBar = {
+        val scheme = MaterialTheme.colorScheme
+        Scaffold(containerColor = Color.Transparent, bottomBar = {
             Column {
                 MiniPlayer(current, position, duration)
-                NavigationBar(containerColor = Color(0xFF101817)) {
+                NavigationBar(containerColor = scheme.surface) {
                     listOf(
                         "全部" to Icons.Default.LibraryMusic,
                         "收藏" to Icons.Default.Favorite,
@@ -383,6 +532,8 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun Header() {
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         val title = when {
             activeTab == "歌单" && selectedPlaylist != null -> selectedPlaylist!!
             activeTab == "专辑" && selectedGroup != null -> selectedGroup!!.second
@@ -396,20 +547,23 @@ class MainActivity : ComponentActivity() {
             if (canBack) {
                 IconButton(onClick = {
                     if (selectedPlaylist != null) selectedPlaylist = null else selectedGroup = null
-                }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = Color.White) }
+                }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = scheme.onBackground) }
             }
             Column(Modifier.weight(1f)) {
-                Text("JIANG MUSIC", color = GREEN, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text("已扫描 ${tracks.size} 个音频文件", color = Color.Gray, fontSize = 12.sp)
+                Text("JIANG MUSIC", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text(title, color = scheme.onBackground, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text("已扫描 ${tracks.size} 个音频文件", color = scheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+            IconButton(onClick = { showSettings = true }) {
+                Icon(Icons.Default.Settings, "设置", tint = accent)
             }
             IconButton(onClick = { searching = !searching; if (!searching) searchQuery = "" }) {
-                Icon(if (searching) Icons.Default.SearchOff else Icons.Default.Search, "搜索", tint = GREEN)
+                Icon(if (searching) Icons.Default.SearchOff else Icons.Default.Search, "搜索", tint = accent)
             }
             Box {
                 var sortMenu by remember { mutableStateOf(false) }
                 IconButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.Default.Sort, "排序", tint = GREEN)
+                    Icon(Icons.Default.Sort, "排序", tint = accent)
                 }
                 DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                     Sort.entries.forEach { s ->
@@ -423,10 +577,10 @@ class MainActivity : ComponentActivity() {
             IconButton(onClick = {
                 if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission) == PackageManager.PERMISSION_GRANTED) scan()
                 else permissionLauncher.launch(audioPermission)
-            }) { Icon(Icons.Default.Refresh, "重新扫描", tint = GREEN) }
+            }) { Icon(Icons.Default.Refresh, "重新扫描", tint = accent) }
             if (activeTab == "歌单") {
                 IconButton(onClick = { showCreatePlaylist = true }) {
-                    Icon(Icons.Default.Add, "新建歌单", tint = GREEN)
+                    Icon(Icons.Default.Add, "新建歌单", tint = accent)
                 }
             }
         }
@@ -462,16 +616,18 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MiniPlayer(current: Track?, position: Long, duration: Long) {
         if (current == null) return
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         var target by remember { mutableFloatStateOf(position.toFloat()) }
         var dragging by remember { mutableStateOf(false) }
-        Surface(color = Color(0xFF17211F), tonalElevation = 8.dp) {
+        Surface(color = scheme.surfaceVariant, tonalElevation = 8.dp) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier
                             .size(42.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF1A3029))
+                            .background(scheme.primaryContainer)
                             .clickable { playerExpanded = true },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -483,7 +639,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
-                            Icon(Icons.Default.GraphicEq, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Default.GraphicEq, null, tint = accent, modifier = Modifier.size(22.dp))
                         }
                     }
                     Spacer(Modifier.width(10.dp))
@@ -492,21 +648,21 @@ class MainActivity : ComponentActivity() {
                             .weight(1f)
                             .clickable { playerExpanded = true }
                     ) {
-                        Text(current.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(current.artist, color = Color.LightGray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(current.title, color = scheme.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(current.artist, color = scheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    IconButton(onClick = connection::previous) { Icon(Icons.Default.SkipPrevious, "上一首", tint = Color.White) }
+                    IconButton(onClick = connection::previous) { Icon(Icons.Default.SkipPrevious, "上一首", tint = scheme.onSurface) }
                     IconButton(onClick = connection::togglePlay) {
-                        Icon(if (connection.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "播放/暂停", tint = GREEN)
+                        Icon(if (connection.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "播放/暂停", tint = accent)
                     }
-                    IconButton(onClick = connection::next) { Icon(Icons.Default.SkipNext, "下一首", tint = Color.White) }
+                    IconButton(onClick = connection::next) { Icon(Icons.Default.SkipNext, "下一首", tint = scheme.onSurface) }
                     IconButton(onClick = connection::cycleMode) {
                         val icon = when (connection.playMode) {
                             PlaybackConnection.MODE_ONE_LOOP -> Icons.Default.RepeatOne
                             PlaybackConnection.MODE_SHUFFLE -> Icons.Default.Shuffle
                             else -> Icons.Default.Repeat
                         }
-                        Icon(icon, "播放模式", tint = GREEN)
+                        Icon(icon, "播放模式", tint = accent)
                     }
                 }
                 Slider(
@@ -516,8 +672,8 @@ class MainActivity : ComponentActivity() {
                     valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(fmtTime(if (dragging) target.toLong() else position), color = Color.LightGray, fontSize = 10.sp)
-                    Text(fmtTime(duration), color = Color.LightGray, fontSize = 10.sp)
+                    Text(fmtTime(if (dragging) target.toLong() else position), color = scheme.onSurfaceVariant, fontSize = 10.sp)
+                    Text(fmtTime(duration), color = scheme.onSurfaceVariant, fontSize = 10.sp)
                 }
             }
         }
@@ -544,10 +700,12 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun EmptyView(text: String = "还没有扫描到音频") {
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.LibraryMusic, null, tint = Color.Gray, modifier = Modifier.size(48.dp))
-                Text(text, color = Color.White)
+                Icon(Icons.Default.LibraryMusic, null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                Text(text, color = scheme.onBackground)
                 Button(onClick = {
                     if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission) == PackageManager.PERMISSION_GRANTED) scan()
                     else permissionLauncher.launch(audioPermission)
@@ -558,13 +716,15 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun GroupList(groups: List<Triple<String, Int, Long>>, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         val sorted = groups.sortedBy { it.first.lowercase() }
         LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(sorted, key = { it.first }) { (name, count, _) ->
                 ListItem(
-                    headlineContent = { Text(name, color = Color.White) },
-                    supportingContent = { Text("$count 首", color = Color.Gray, fontSize = 12.sp) },
-                    leadingContent = { Icon(icon, null, tint = GREEN) },
+                    headlineContent = { Text(name, color = scheme.onSurface) },
+                    supportingContent = { Text("$count 首", color = scheme.onSurfaceVariant, fontSize = 12.sp) },
+                    leadingContent = { Icon(icon, null, tint = accent) },
                     modifier = Modifier.clickable { selectedGroup = activeTab to name },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 )
@@ -574,19 +734,21 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun PlaylistList() {
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         if (playlistNames.isEmpty()) {
-            Text("还没有歌单，点击右上角 + 创建", color = Color.Gray)
+            Text("还没有歌单，点击右上角 + 创建", color = scheme.onSurfaceVariant)
             return
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(playlistNames, key = { it }) { name ->
                 var menu by remember { mutableStateOf(false) }
                 ListItem(
-                    headlineContent = { Text(name, color = Color.White) },
-                    leadingContent = { Icon(Icons.Default.QueueMusic, null, tint = GREEN) },
+                    headlineContent = { Text(name, color = scheme.onSurface) },
+                    leadingContent = { Icon(Icons.Default.QueueMusic, null, tint = accent) },
                     trailingContent = {
                         Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = scheme.onSurfaceVariant) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("删除歌单") }, onClick = {
                                     menu = false
@@ -614,13 +776,15 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun TrackRow(track: Track) {
+        val scheme = MaterialTheme.colorScheme
+        val accent = LocalAccent.current
         var menu by remember { mutableStateOf(false) }
         val selected = track.uri == connection.nowPlayingUri
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(if (selected) Color(0xFF1A3029) else Color.Transparent)
+                .background(if (selected) scheme.primaryContainer else Color.Transparent)
                 .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -628,12 +792,12 @@ class MainActivity : ComponentActivity() {
                 Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1A3029))
+                    .background(scheme.primaryContainer)
                     .clickable { playTrack(track) },
                 contentAlignment = Alignment.Center,
             ) {
                 if (selected) {
-                    Icon(Icons.Default.GraphicEq, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.GraphicEq, null, tint = accent, modifier = Modifier.size(22.dp))
                 } else if (track.artworkUri != null) {
                     AsyncImage(
                         model = track.artworkUri,
@@ -642,7 +806,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Icon(Icons.Default.PlayArrow, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.PlayArrow, null, tint = accent, modifier = Modifier.size(22.dp))
                 }
             }
             Spacer(Modifier.width(10.dp))
@@ -651,21 +815,22 @@ class MainActivity : ComponentActivity() {
                     .weight(1f)
                     .clickable { playTrack(track) }
             ) {
-                Text(track.title, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(track.title, color = scheme.onSurface, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val extra = if (track.plays > 0) " · ${track.plays} 次" else ""
-                Text("${track.artist} · ${track.category} · ${fmtTime(track.duration)}$extra", color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${track.artist} · ${track.category} · ${fmtTime(track.duration)}$extra", color = scheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = { toggleFavorite(track) }) {
                 Icon(
                     Icons.Default.Favorite, "收藏",
-                    tint = if (track.favorite) Color(0xFFFF6B8A) else Color.Gray,
+                    tint = if (track.favorite) PINK else scheme.onSurfaceVariant,
                 )
             }
             Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
+                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = scheme.onSurfaceVariant) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("修改分类") }, onClick = { menu = false; editingTrack = track })
                     DropdownMenuItem(text = { Text("添加到歌单") }, onClick = { menu = false; addingTrack = track })
+                    DropdownMenuItem(text = { Text("移出媒体库") }, onClick = { menu = false; hideTrack(track) })
                     if (activeTab == "歌单" && selectedPlaylist != null) {
                         DropdownMenuItem(text = { Text("从本歌单移除") }, onClick = {
                             menu = false
@@ -675,11 +840,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    private fun playTrack(track: Track) {
-        val list = visibleTracks().ifEmpty { tracks.toList() }
-        connection.playOrToggle(list, track) { t -> db.state(t.uri).position }
     }
 
     /* ── 弹窗状态 ── */
@@ -695,7 +855,7 @@ class MainActivity : ComponentActivity() {
         val text = crashLog ?: return
         AlertDialog(
             onDismissRequest = { crashLog = null },
-            title = { Text("检测到上次异常退出", color = Color(0xFFFF6B8A)) },
+            title = { Text("检测到上次异常退出", color = PINK) },
             text = {
                 Column(
                     Modifier
@@ -724,9 +884,6 @@ class MainActivity : ComponentActivity() {
             },
         )
     }
-
-    private fun toast(msg: String) =
-        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
 
     @Composable
     private fun Dialogs() {
@@ -792,5 +949,10 @@ class MainActivity : ComponentActivity() {
                 confirmButton = { TextButton(onClick = { addingTrack = null }) { Text("关闭") } },
             )
         }
+    }
+
+    private enum class Sort(val label: String) {
+        TITLE("标题"), ARTIST("艺术家"), ALBUM("专辑"), DURATION("时长"),
+        RECENT_PLAYED("最近播放"), RECENT_ADDED("最近添加"), PLAYS("播放次数"),
     }
 }

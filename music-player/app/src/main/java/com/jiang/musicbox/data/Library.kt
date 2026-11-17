@@ -2,17 +2,29 @@ package com.jiang.musicbox.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.net.Uri
 import android.provider.MediaStore
 
-/** MediaStore 扫描器：一次查询全部音频 + 合并数据库状态 */
+/**
+ * MediaStore 扫描器。
+ * - titleSource: "metadata"（默认，读音频内嵌标题）| "filename"（读文件名，去掉扩展名——
+ *   本地改过名的文件用这个，绕过内嵌元数据里的原始名）。
+ * - includeHidden: true 时返回包含已隐藏音频的完整列表（设置里的「已隐藏」管理用）。
+ */
 object Library {
 
-    fun scan(context: Context, db: MusicDatabase): List<Track> {
+    fun scan(
+        context: Context,
+        db: MusicDatabase,
+        titleSource: String = "metadata",
+        includeHidden: Boolean = false,
+    ): List<Track> {
         val found = mutableListOf<Track>()
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
@@ -26,6 +38,7 @@ object Library {
         )?.use { c ->
             val iId = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val iTitle = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val iDisplay = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
             val iArtist = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val iAlbum = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val iDur = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
@@ -36,17 +49,27 @@ object Library {
                 val id = c.getLong(iId)
                 val uri = ContentUris.withAppendedId(collection, id).toString()
                 val state = db.state(uri)
-                val rawTitle = c.getString(iTitle)?.takeIf { it.isNotBlank() } ?: "未知文件"
+                if (state.hidden && !includeHidden) continue
+
+                val display = c.getString(iDisplay)?.takeIf { it.isNotBlank() } ?: ""
+                val stem = display.substringBeforeLast('.', display)
+                val embedded = c.getString(iTitle)?.takeIf { it.isNotBlank() }
+                    ?: stem.ifBlank { "未知文件" }
+                val title = if (titleSource == "filename" && stem.isNotBlank()) stem else embedded
+
                 val albumId = c.getLong(iAlbumId)
+                val artistRaw = c.getString(iArtist)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "未知艺术家"
+                val albumRaw = c.getString(iAlbum)?.takeIf { it.isNotBlank() } ?: "未知专辑"
                 found.add(
                     Track(
                         id = id,
-                        title = rawTitle,
-                        artist = c.getString(iArtist)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "未知艺术家",
-                        album = c.getString(iAlbum)?.takeIf { it.isNotBlank() } ?: "未知专辑",
+                        title = title,
+                        fileName = stem,
+                        artist = artistRaw,
+                        album = albumRaw,
                         duration = c.getLong(iDur),
                         uri = uri,
-                        category = state.category ?: Categories.infer(rawTitle),
+                        category = state.category ?: Categories.infer(title),
                         favorite = state.favorite,
                         plays = state.plays,
                         lastPlayed = state.lastPlayed,
@@ -54,8 +77,9 @@ object Library {
                         dateAdded = c.getLong(iDate) * 1000L,
                         size = c.getLong(iSize),
                         artworkUri = if (albumId > 0)
-                            ContentUris.withAppendedId("content://media/external/audio/albumart".let { android.net.Uri.parse(it) }, albumId).toString()
+                            ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId).toString()
                         else null,
+                        hidden = state.hidden,
                     )
                 )
             }

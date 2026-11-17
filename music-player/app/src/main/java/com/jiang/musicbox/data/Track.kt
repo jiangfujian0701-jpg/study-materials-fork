@@ -4,6 +4,7 @@ package com.jiang.musicbox.data
 data class Track(
     val id: Long,
     val title: String,
+    val fileName: String,
     val artist: String,
     val album: String,
     val duration: Long,
@@ -16,6 +17,7 @@ data class Track(
     val dateAdded: Long,
     val size: Long,
     val artworkUri: String?,
+    val hidden: Boolean,
 )
 
 /** 数据库里的持久状态（与 MediaStore 行合并成 Track） */
@@ -26,6 +28,7 @@ data class TrackState(
     val plays: Int = 0,
     val lastPlayed: Long = 0L,
     val position: Long = 0L,
+    val hidden: Boolean = false,
 )
 
 object Categories {
