@@ -1,6 +1,7 @@
 package com.jiang.musicbox
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -143,6 +145,7 @@ class MainActivity : ComponentActivity() {
         db = MusicDatabase(this)
         connection = PlaybackConnection(this)
         connection.connect()
+        crashLog = JiangMusicApp.readCrashLog(this)
 
         if (ContextCompat.checkSelfPermission(this, audioPermission) == PackageManager.PERMISSION_GRANTED) {
             scan()
@@ -275,6 +278,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val current = currentTrack()
+        if (crashLog != null) CrashLogDialog()
         if (playerExpanded) {
             PlayerScreen(
                 track = current,
@@ -684,6 +688,45 @@ class MainActivity : ComponentActivity() {
     private var addingTrack by mutableStateOf<Track?>(null)
     private var showCreatePlaylist by mutableStateOf(false)
     private var playlistName by mutableStateOf("")
+    private var crashLog by mutableStateOf<String?>(null)
+
+    @Composable
+    private fun CrashLogDialog() {
+        val text = crashLog ?: return
+        AlertDialog(
+            onDismissRequest = { crashLog = null },
+            title = { Text("检测到上次异常退出", color = Color(0xFFFF6B8A)) },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(text, fontSize = 11.sp, lineHeight = 15.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("jiang_music_crash", text))
+                    toast("已复制崩溃日志")
+                }) { Text("复制日志") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { crashLog = null }) { Text("先关掉") }
+                    TextButton(onClick = {
+                        JiangMusicApp.clearCrashLog(this@MainActivity)
+                        crashLog = null
+                    }) { Text("清除") }
+                }
+            },
+        )
+    }
+
+    private fun toast(msg: String) =
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
 
     @Composable
     private fun Dialogs() {

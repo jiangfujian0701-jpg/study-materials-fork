@@ -3,7 +3,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application
+        android:name=".JiangMusicApp"
         android:allowBackup="true"
         android:label="江的音乐"
         android:theme="@android:style/Theme.Material.NoActionBar"
