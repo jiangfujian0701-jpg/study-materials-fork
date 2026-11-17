@@ -1,383 +1,753 @@
 package com.jiang.musicbox
 
 import android.Manifest
-import android.content.ContentUris
-import android.content.Context
 import android.content.pm.PackageManager
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
 import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import coil.compose.AsyncImage
+import com.jiang.musicbox.data.Categories
+import com.jiang.musicbox.data.Library
+import com.jiang.musicbox.data.MusicDatabase
+import com.jiang.musicbox.data.Track
+import com.jiang.musicbox.ui.PlaybackConnection
+import com.jiang.musicbox.ui.PlayerScreen
+import com.jiang.musicbox.ui.fmtSleep
+import com.jiang.musicbox.ui.fmtTime
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-private const val GREEN = 0xFF78D6B0L
-private val categories = listOf("歌曲", "音声", "有声书", "播客", "其他音频", "待识别")
+private val BG = Color(0xFF0B1010)
+private val SURFACE = Color(0xFF151D1C)
+private val GREEN = Color(0xFF78D6B0)
 
-data class Track(
-    val id: Long, val title: String, val artist: String, val album: String,
-    val duration: Long, val uri: String, val category: String, val favorite: Boolean
-)
-
-class MusicDatabase(context: Context) : SQLiteOpenHelper(context, "jiang_music.db", null, 1) {
-    override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE track_state (uri TEXT PRIMARY KEY, category TEXT, manual INTEGER NOT NULL DEFAULT 0, favorite INTEGER NOT NULL DEFAULT 0, plays INTEGER NOT NULL DEFAULT 0, last_played INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)")
-        db.execSQL("CREATE TABLE playlists (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
-        db.execSQL("CREATE TABLE playlist_tracks (playlist_id INTEGER NOT NULL, uri TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(playlist_id, uri))")
-    }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
-    fun state(uri: String): State {
-        readableDatabase.rawQuery("SELECT category,manual,favorite,plays,last_played,position FROM track_state WHERE uri=?", arrayOf(uri)).use {
-            if (it.moveToFirst()) return State(it.getString(0), it.getInt(1) == 1, it.getInt(2) == 1, it.getInt(3), it.getLong(4), it.getLong(5))
-        }
-        return State(null, false, false, 0, 0, 0)
-    }
-    fun setCategory(uri: String, category: String) {
-        writableDatabase.execSQL("INSERT INTO track_state(uri,category,manual) VALUES(?,?,1) ON CONFLICT(uri) DO UPDATE SET category=excluded.category,manual=1", arrayOf(uri, category))
-    }
-    fun toggleFavorite(uri: String) {
-        val next = if (state(uri).favorite) 0 else 1
-        writableDatabase.execSQL("INSERT INTO track_state(uri,favorite) VALUES(?,?) ON CONFLICT(uri) DO UPDATE SET favorite=?", arrayOf(uri, next, next))
-    }
-    fun played(uri: String) {
-        writableDatabase.execSQL("INSERT INTO track_state(uri,plays,last_played) VALUES(?,1,?) ON CONFLICT(uri) DO UPDATE SET plays=plays+1,last_played=excluded.last_played", arrayOf(uri, System.currentTimeMillis()))
-    }
-    fun savePosition(uri: String, position: Long) {
-        writableDatabase.execSQL("INSERT INTO track_state(uri,position) VALUES(?,?) ON CONFLICT(uri) DO UPDATE SET position=excluded.position", arrayOf(uri, position))
-    }
-    fun createPlaylist(name: String) {
-        writableDatabase.execSQL("INSERT OR IGNORE INTO playlists(name) VALUES(?)", arrayOf(name))
-    }
-    fun playlists(): List<String> {
-        val result = mutableListOf<String>()
-        readableDatabase.rawQuery("SELECT name FROM playlists ORDER BY name", null).use { while (it.moveToNext()) result.add(it.getString(0)) }
-        return result
-    }
-    fun addToPlaylist(name: String, uri: String) {
-        writableDatabase.rawQuery("SELECT id FROM playlists WHERE name=?", arrayOf(name)).use {
-            if (it.moveToFirst()) writableDatabase.execSQL("INSERT OR IGNORE INTO playlist_tracks(playlist_id,uri) VALUES(?,?)", arrayOf(it.getLong(0), uri))
-        }
-    }
-    fun playlistUris(name: String): Set<String> {
-        val result = mutableSetOf<String>()
-        readableDatabase.rawQuery("SELECT t.uri FROM playlist_tracks t JOIN playlists p ON p.id=t.playlist_id WHERE p.name=?", arrayOf(name)).use { while (it.moveToNext()) result.add(it.getString(0)) }
-        return result
-    }
+private enum class Sort(val label: String) {
+    TITLE("标题"), ARTIST("艺术家"), ALBUM("专辑"), DURATION("时长"),
+    RECENT_PLAYED("最近播放"), RECENT_ADDED("最近添加"), PLAYS("播放次数"),
 }
-data class State(val category: String?, val manual: Boolean, val favorite: Boolean, val plays: Int, val lastPlayed: Long, val position: Long)
 
 class MainActivity : ComponentActivity() {
-    private lateinit var player: ExoPlayer
+
     private lateinit var db: MusicDatabase
+    private lateinit var connection: PlaybackConnection
+
     private val tracks = mutableStateListOf<Track>()
-    private val favorites = mutableStateListOf<String>()
-    private val history = mutableStateListOf<String>()
     private val playlistNames = mutableStateListOf<String>()
-    private var currentUri by mutableStateOf<String?>(null)
-    private var playing by mutableStateOf(false)
-    private var playMode by mutableStateOf("列表循环")
-    private var currentPosition by mutableLongStateOf(0L)
-    private var currentDuration by mutableLongStateOf(1L)
+
     private var activeTab by mutableStateOf("全部")
     private var selectedPlaylist by mutableStateOf<String?>(null)
+    private var selectedGroup by mutableStateOf<Pair<String, String>?>(null)
+    private var searching by mutableStateOf(false)
+    private var searchQuery by mutableStateOf("")
+    private var sortMode by mutableStateOf(Sort.TITLE)
+    private var playerExpanded by mutableStateOf(false)
+    private var sleepRemaining by mutableStateOf<Long?>(null)
 
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) scan() }
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) scan() }
+
+    private val audioPermission: String =
+        if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         db = MusicDatabase(this)
-        player = ExoPlayer.Builder(this).build()
-        player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                currentUri = mediaItem?.localConfiguration?.uri?.toString()
-                currentDuration = player.duration.coerceAtLeast(1L)
-                currentUri?.let { db.played(it) }
-                refreshSavedLists()
-            }
-        })
-        refreshSavedLists()
-        val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) scan()
+        connection = PlaybackConnection(this)
+        connection.connect()
+
+        if (ContextCompat.checkSelfPermission(this, audioPermission) == PackageManager.PERMISSION_GRANTED) {
+            scan()
+        }
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Color(GREEN), background = Color(0xFF0B1010), surface = Color(0xFF151D1C))) {
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        if (player.mediaItemCount > 0) {
-                            currentPosition = player.currentPosition.coerceAtLeast(0L)
-                            currentDuration = player.duration.coerceAtLeast(1L)
-                        }
-                        delay(300)
+            MaterialTheme(
+                colorScheme = MaterialTheme.colorScheme.copy(
+                    primary = GREEN, background = BG, surface = SURFACE,
+                )
+            ) { AppRoot() }
+        }
+    }
+
+    private fun scan() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val found = Library.scan(applicationContext, db)
+            withContext(Dispatchers.Main) {
+                tracks.clear()
+                tracks.addAll(found)
+                refreshPlaylists()
+            }
+        }
+    }
+
+    /** 只重读数据库状态（收藏/播放次数/进度），不重新扫 MediaStore */
+    private fun syncStates() {
+        val updated = tracks.toList().map { t ->
+            val s = db.state(t.uri)
+            t.copy(favorite = s.favorite, plays = s.plays, lastPlayed = s.lastPlayed, position = s.position)
+        }
+        tracks.clear()
+        tracks.addAll(updated)
+    }
+
+    private fun refreshPlaylists() {
+        playlistNames.clear()
+        playlistNames.addAll(db.playlists())
+    }
+
+    private fun updateTrack(uri: String, transform: (Track) -> Track) {
+        val i = tracks.indexOfFirst { it.uri == uri }
+        if (i >= 0) tracks[i] = transform(tracks[i])
+    }
+
+    private fun visibleTracks(): List<Track> {
+        val base: List<Track> = when (activeTab) {
+            "收藏" -> tracks.filter { it.favorite }
+            "历史" -> tracks.filter { it.lastPlayed > 0 }
+            "歌单" -> {
+                val name = selectedPlaylist
+                if (name == null) tracks
+                else {
+                    val keys = db.playlistKeys(name)
+                    tracks.filter { MusicDatabase.keyOf(it.uri) in keys }
+                }
+            }
+            "专辑" -> selectedGroup?.let { (_, name) -> tracks.filter { it.album == name } } ?: tracks
+            "艺术家" -> selectedGroup?.let { (_, name) -> tracks.filter { it.artist == name } } ?: tracks
+            else -> if (activeTab == "全部") tracks else tracks.filter { it.category == activeTab }
+        }
+        val filtered = if (searchQuery.isNotBlank()) base.filter {
+            it.title.contains(searchQuery, true) ||
+                it.artist.contains(searchQuery, true) ||
+                it.album.contains(searchQuery, true)
+        } else base
+        return applySort(filtered)
+    }
+
+    private fun applySort(list: List<Track>): List<Track> = when (sortMode) {
+        Sort.TITLE -> list.sortedBy { it.title.lowercase() }
+        Sort.ARTIST -> list.sortedBy { it.artist.lowercase() }
+        Sort.ALBUM -> list.sortedBy { it.album.lowercase() }
+        Sort.DURATION -> list.sortedByDescending { it.duration }
+        Sort.RECENT_PLAYED -> list.sortedByDescending { it.lastPlayed }
+        Sort.RECENT_ADDED -> list.sortedByDescending { it.dateAdded }
+        Sort.PLAYS -> list.sortedByDescending { it.plays }
+    }
+
+    private fun toggleFavorite(track: Track) {
+        val now = db.toggleFavorite(track.uri)
+        updateTrack(track.uri) { it.copy(favorite = now) }
+    }
+
+    private fun currentTrack(): Track? =
+        connection.nowPlayingUri?.let { uri -> tracks.firstOrNull { it.uri == uri } }
+
+    override fun onPause() {
+        connection.nowPlayingUri?.let { db.savePosition(it, connection.position()) }
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        connection.nowPlayingUri?.let { db.savePosition(it, connection.position()) }
+        connection.release()
+        db.close()
+        super.onDestroy()
+    }
+
+    /* ══════════════════ UI ══════════════════ */
+
+    @Composable
+    private fun AppRoot() {
+        // 播放进度轮询
+        var position by remember { mutableLongStateOf(0L) }
+        var duration by remember { mutableLongStateOf(1L) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                if (connection.ready && connection.queueSize() > 0) {
+                    position = connection.position()
+                    duration = connection.duration()
+                }
+                delay(300)
+            }
+        }
+        // 睡眠定时倒计时
+        LaunchedEffect(sleepRemaining) {
+            val remain = sleepRemaining ?: return@LaunchedEffect
+            if (remain <= 1000) {
+                delay(1000)
+                connection.pause()
+                sleepRemaining = null
+            } else {
+                delay(1000)
+                sleepRemaining = remain - 1000
+            }
+        }
+        // 回到前台时同步收藏/播放次数
+        LaunchedEffect(Unit) {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { syncStates() }
+        }
+
+        val current = currentTrack()
+        if (playerExpanded) {
+            PlayerScreen(
+                track = current,
+                playing = connection.playing,
+                position = position,
+                duration = duration,
+                playMode = connection.playMode,
+                sleepRemaining = sleepRemaining,
+                onToggle = connection::togglePlay,
+                onNext = connection::next,
+                onPrevious = connection::previous,
+                onSeek = { connection.seekTo(it) },
+                onMode = connection::cycleMode,
+                onFavorite = { current?.let { toggleFavorite(it) } },
+                onSleepTimer = { showSleepDialog = true },
+                onClose = { playerExpanded = false },
+            )
+        } else {
+            LibraryScaffold(current, position, duration)
+        }
+        if (showSleepDialog) SleepTimerDialog()
+        Dialogs()
+    }
+
+    private var showSleepDialog by mutableStateOf(false)
+
+    @Composable
+    private fun SleepTimerDialog() {
+        AlertDialog(
+            onDismissRequest = { showSleepDialog = false },
+            title = { Text("睡眠定时") },
+            text = {
+                Column {
+                    if (sleepRemaining != null) {
+                        Text("剩余 ${fmtSleep(sleepRemaining!!)}", color = Color(0xFFFF6B8A))
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text("播完当前剩余时间后自动暂停")
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(15, 30, 45, 60).forEach { min ->
+                        TextButton(onClick = {
+                            sleepRemaining = min * 60_000L
+                            showSleepDialog = false
+                        }) { Text("$min 分") }
+                    }
+                    TextButton(onClick = { sleepRemaining = null; showSleepDialog = false }) {
+                        Text("关闭定时")
                     }
                 }
-                MusicHome(
-                    tracks = visibleTracks(), playingTrack = tracks.firstOrNull { it.uri == currentUri }, allCount = tracks.size, tab = activeTab, currentUri = currentUri,
-                    playing = playing, position = currentPosition, duration = currentDuration,
-                    playMode = playMode, playlists = playlistNames, selectedPlaylist = selectedPlaylist,
-                    onTab = { activeTab = it; selectedPlaylist = null },
-                    onScan = { if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) scan() else permissionLauncher.launch(permission) },
-                    onPlay = { play(it) },
-                    onToggle = { if (player.isPlaying) player.pause() else player.play() },
-                    onNext = { skip(1) }, onPrevious = { skip(-1) },
-                    onMode = { cyclePlayMode() },
-                    onSeek = { player.seekTo(it) },
-                    onFavorite = { db.toggleFavorite(it.uri); scan() },
-                    onCategory = { track, category -> db.setCategory(track.uri, category); scan() },
-                    onCreatePlaylist = { name -> db.createPlaylist(name); refreshSavedLists() },
-                    onAddPlaylist = { track, name -> db.addToPlaylist(name, track.uri) },
-                    onOpenPlaylist = { selectedPlaylist = it; activeTab = "歌单" }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSleepDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
+    @Composable
+    private fun LibraryScaffold(current: Track?, position: Long, duration: Long) {
+        Scaffold(containerColor = BG, bottomBar = {
+            Column {
+                MiniPlayer(current, position, duration)
+                NavigationBar(containerColor = Color(0xFF101817)) {
+                    listOf(
+                        "全部" to Icons.Default.LibraryMusic,
+                        "收藏" to Icons.Default.Favorite,
+                        "历史" to Icons.Default.History,
+                        "歌单" to Icons.Default.QueueMusic,
+                    ).forEach { (name, icon) ->
+                        val selected = if (name == "全部") activeTab in Categories.ALL
+                        else activeTab == name
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                activeTab = if (name == "全部") "全部" else name
+                                selectedPlaylist = null
+                                selectedGroup = null
+                            },
+                            icon = { Icon(icon, null) },
+                            label = { Text(name) },
+                        )
+                    }
+                }
+            }
+        }) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp)
+            ) {
+                Header()
+                if (activeTab == "全部" || activeTab in Categories.ALL || activeTab == "专辑" || activeTab == "艺术家") {
+                    CategoryChips()
+                }
+                Content()
+            }
+        }
+    }
+
+    @Composable
+    private fun Header() {
+        val title = when {
+            activeTab == "歌单" && selectedPlaylist != null -> selectedPlaylist!!
+            activeTab == "专辑" && selectedGroup != null -> selectedGroup!!.second
+            activeTab == "艺术家" && selectedGroup != null -> selectedGroup!!.second
+            else -> activeTab
+        }
+        val canBack = (activeTab == "歌单" && selectedPlaylist != null) ||
+            ((activeTab == "专辑" || activeTab == "艺术家") && selectedGroup != null)
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (canBack) {
+                IconButton(onClick = {
+                    if (selectedPlaylist != null) selectedPlaylist = null else selectedGroup = null
+                }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = Color.White) }
+            }
+            Column(Modifier.weight(1f)) {
+                Text("JIANG MUSIC", color = GREEN, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text("已扫描 ${tracks.size} 个音频文件", color = Color.Gray, fontSize = 12.sp)
+            }
+            IconButton(onClick = { searching = !searching; if (!searching) searchQuery = "" }) {
+                Icon(if (searching) Icons.Default.SearchOff else Icons.Default.Search, "搜索", tint = GREEN)
+            }
+            Box {
+                var sortMenu by remember { mutableStateOf(false) }
+                IconButton(onClick = { sortMenu = true }) {
+                    Icon(Icons.Default.Sort, "排序", tint = GREEN)
+                }
+                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                    Sort.entries.forEach { s ->
+                        DropdownMenuItem(
+                            text = { Text(if (sortMode == s) "✓ ${s.label}" else s.label) },
+                            onClick = { sortMode = s; sortMenu = false },
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = {
+                if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission) == PackageManager.PERMISSION_GRANTED) scan()
+                else permissionLauncher.launch(audioPermission)
+            }) { Icon(Icons.Default.Refresh, "重新扫描", tint = GREEN) }
+            if (activeTab == "歌单") {
+                IconButton(onClick = { showCreatePlaylist = true }) {
+                    Icon(Icons.Default.Add, "新建歌单", tint = GREEN)
+                }
+            }
+        }
+        if (searching) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("搜索标题 / 艺术家 / 专辑") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+
+    @Composable
+    private fun CategoryChips() {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            (Categories.ALL + listOf("专辑", "艺术家")).forEach { c ->
+                FilterChip(selected = activeTab == c, onClick = {
+                    activeTab = c
+                    selectedGroup = null
+                }, label = { Text(c, fontSize = 11.sp) })
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    @Composable
+    private fun MiniPlayer(current: Track?, position: Long, duration: Long) {
+        if (current == null) return
+        var target by remember { mutableFloatStateOf(position.toFloat()) }
+        var dragging by remember { mutableStateOf(false) }
+        Surface(color = Color(0xFF17211F), tonalElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF1A3029))
+                            .clickable { playerExpanded = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (current.artworkUri != null) {
+                            AsyncImage(
+                                model = current.artworkUri,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Icon(Icons.Default.GraphicEq, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable { playerExpanded = true }
+                    ) {
+                        Text(current.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(current.artist, color = Color.LightGray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = connection::previous) { Icon(Icons.Default.SkipPrevious, "上一首", tint = Color.White) }
+                    IconButton(onClick = connection::togglePlay) {
+                        Icon(if (connection.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "播放/暂停", tint = GREEN)
+                    }
+                    IconButton(onClick = connection::next) { Icon(Icons.Default.SkipNext, "下一首", tint = Color.White) }
+                    IconButton(onClick = connection::cycleMode) {
+                        val icon = when (connection.playMode) {
+                            PlaybackConnection.MODE_ONE_LOOP -> Icons.Default.RepeatOne
+                            PlaybackConnection.MODE_SHUFFLE -> Icons.Default.Shuffle
+                            else -> Icons.Default.Repeat
+                        }
+                        Icon(icon, "播放模式", tint = GREEN)
+                    }
+                }
+                Slider(
+                    value = (if (dragging) target else position.toFloat()).coerceIn(0f, duration.coerceAtLeast(1L).toFloat()),
+                    onValueChange = { target = it; dragging = true },
+                    onValueChangeFinished = { connection.seekTo(target.toLong()); dragging = false },
+                    valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(fmtTime(if (dragging) target.toLong() else position), color = Color.LightGray, fontSize = 10.sp)
+                    Text(fmtTime(duration), color = Color.LightGray, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun Content() {
+        val list = visibleTracks()
+        when {
+            activeTab == "歌单" && selectedPlaylist == null -> PlaylistList()
+            activeTab == "专辑" && selectedGroup == null -> GroupList(
+                tracks.groupBy { it.album }.map { (name, ts) -> Triple(name, ts.size, ts.maxOf { it.dateAdded }) },
+                Icons.Default.Album,
+            )
+            activeTab == "艺术家" && selectedGroup == null -> GroupList(
+                tracks.groupBy { it.artist }.map { (name, ts) -> Triple(name, ts.size, ts.maxOf { it.dateAdded }) },
+                Icons.Default.Person,
+            )
+            list.isEmpty() && (searching || searchQuery.isNotBlank()) -> EmptyView("没有匹配「$searchQuery」的结果")
+            list.isEmpty() -> EmptyView()
+            else -> TrackList(list)
+        }
+    }
+
+    @Composable
+    private fun EmptyView(text: String = "还没有扫描到音频") {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.LibraryMusic, null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                Text(text, color = Color.White)
+                Button(onClick = {
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, audioPermission) == PackageManager.PERMISSION_GRANTED) scan()
+                    else permissionLauncher.launch(audioPermission)
+                }) { Text("扫描本地音频") }
+            }
+        }
+    }
+
+    @Composable
+    private fun GroupList(groups: List<Triple<String, Int, Long>>, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+        val sorted = groups.sortedBy { it.first.lowercase() }
+        LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            items(sorted, key = { it.first }) { (name, count, _) ->
+                ListItem(
+                    headlineContent = { Text(name, color = Color.White) },
+                    supportingContent = { Text("$count 首", color = Color.Gray, fontSize = 12.sp) },
+                    leadingContent = { Icon(icon, null, tint = GREEN) },
+                    modifier = Modifier.clickable { selectedGroup = activeTab to name },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 )
             }
         }
     }
 
-    private fun scan() {
-        val found = mutableListOf<Track>()
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.DURATION)
-        contentResolver.query(uri, projection, null, null, "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC")?.use { c ->
-            val id = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            val title = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-            val artist = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-            val album = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-            val duration = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-            while (c.moveToNext()) {
-                val fileUri = ContentUris.withAppendedId(uri, c.getLong(id)).toString()
-                val state = db.state(fileUri)
-                val rawTitle = c.getString(title)?.takeIf { it.isNotBlank() } ?: "未知文件"
-                val inferred = state.category ?: if (rawTitle.contains("朗读") || rawTitle.contains("对白") || rawTitle.contains("Drama", true)) "音声" else "待识别"
-                found.add(Track(c.getLong(id), rawTitle, c.getString(artist)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "未知艺术家", c.getString(album) ?: "", c.getLong(duration), fileUri, inferred, state.favorite))
-            }
-        }
-        tracks.clear(); tracks.addAll(found)
-        refreshSavedLists()
-    }
-
-    private fun refreshSavedLists() {
-        favorites.clear(); favorites.addAll(tracks.filter { db.state(it.uri).favorite }.map { it.uri })
-        history.clear()
-        history.addAll(tracks.filter { db.state(it.uri).lastPlayed > 0 }.sortedByDescending { db.state(it.uri).lastPlayed }.map { it.uri })
-        playlistNames.clear(); playlistNames.addAll(db.playlists())
-    }
-
-    private fun visibleTracks(): List<Track> {
-        val base = when (activeTab) {
-            "收藏" -> tracks.filter { db.state(it.uri).favorite }
-            "历史" -> tracks.filter { db.state(it.uri).lastPlayed > 0 }.sortedByDescending { db.state(it.uri).lastPlayed }
-            "歌单" -> tracks.filter { selectedPlaylist?.let { p -> it.uri in db.playlistUris(p) } ?: false }
-            "歌曲", "音声", "有声书", "播客", "其他音频", "待识别" -> tracks.filter { it.category == activeTab }
-            else -> tracks.toList()
-        }
-        return base
-    }
-
-    private fun play(track: Track) {
-        if (currentUri == track.uri && player.mediaItemCount > 0) {
-            player.play()
+    @Composable
+    private fun PlaylistList() {
+        if (playlistNames.isEmpty()) {
+            Text("还没有歌单，点击右上角 + 创建", color = Color.Gray)
             return
         }
-        val queue = visibleTracks().ifEmpty { tracks.toList() }
-        val orderedQueue = if (queue.any { it.uri == track.uri }) queue else queue + track
-        val startIndex = orderedQueue.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
-        val saved = db.state(track.uri).position
-        val startPosition = if (saved > 0 && saved < track.duration - 5000) saved else 0L
-        currentUri = track.uri
-        player.setMediaItems(orderedQueue.map { MediaItem.fromUri(android.net.Uri.parse(it.uri)) }, startIndex, startPosition)
-        applyPlayMode()
-        player.prepare()
-        player.play()
-    }
-
-    private fun cyclePlayMode() {
-        playMode = when (playMode) {
-            "列表循环" -> "单曲循环"
-            "单曲循环" -> "随机播放"
-            else -> "列表循环"
-        }
-        applyPlayMode()
-    }
-
-    private fun applyPlayMode() {
-        when (playMode) {
-            "单曲循环" -> {
-                player.repeatMode = Player.REPEAT_MODE_ONE
-                player.shuffleModeEnabled = false
-            }
-            "随机播放" -> {
-                player.repeatMode = Player.REPEAT_MODE_ALL
-                player.shuffleModeEnabled = true
-            }
-            else -> {
-                player.repeatMode = Player.REPEAT_MODE_ALL
-                player.shuffleModeEnabled = false
+        LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            items(playlistNames, key = { it }) { name ->
+                var menu by remember { mutableStateOf(false) }
+                ListItem(
+                    headlineContent = { Text(name, color = Color.White) },
+                    leadingContent = { Icon(Icons.Default.QueueMusic, null, tint = GREEN) },
+                    trailingContent = {
+                        Box {
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("删除歌单") }, onClick = {
+                                    menu = false
+                                    db.deletePlaylist(name)
+                                    refreshPlaylists()
+                                })
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable { selectedPlaylist = name },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
             }
         }
     }
 
-    private fun skip(direction: Int) {
-        if (player.mediaItemCount == 0) {
-            val list = visibleTracks()
-            if (list.isNotEmpty()) play(if (direction > 0) list.first() else list.last())
-            return
+    @Composable
+    private fun TrackList(list: List<Track>) {
+        LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            items(list, key = { it.uri }) { track ->
+                TrackRow(track)
+            }
         }
-        if (direction > 0) player.seekToNextMediaItem() else player.seekToPreviousMediaItem()
     }
 
-    override fun onPause() {
-        currentUri?.let { db.savePosition(it, player.currentPosition.coerceAtLeast(0L)) }
-        super.onPause()
+    @Composable
+    private fun TrackRow(track: Track) {
+        var menu by remember { mutableStateOf(false) }
+        val selected = track.uri == connection.nowPlayingUri
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (selected) Color(0xFF1A3029) else Color.Transparent)
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1A3029))
+                    .clickable { playTrack(track) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(Icons.Default.GraphicEq, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                } else if (track.artworkUri != null) {
+                    AsyncImage(
+                        model = track.artworkUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(Icons.Default.PlayArrow, null, tint = GREEN, modifier = Modifier.size(22.dp))
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clickable { playTrack(track) }
+            ) {
+                Text(track.title, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val extra = if (track.plays > 0) " · ${track.plays} 次" else ""
+                Text("${track.artist} · ${track.category} · ${fmtTime(track.duration)}$extra", color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton(onClick = { toggleFavorite(track) }) {
+                Icon(
+                    Icons.Default.Favorite, "收藏",
+                    tint = if (track.favorite) Color(0xFFFF6B8A) else Color.Gray,
+                )
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("修改分类") }, onClick = { menu = false; editingTrack = track })
+                    DropdownMenuItem(text = { Text("添加到歌单") }, onClick = { menu = false; addingTrack = track })
+                    if (activeTab == "歌单" && selectedPlaylist != null) {
+                        DropdownMenuItem(text = { Text("从本歌单移除") }, onClick = {
+                            menu = false
+                            db.removeFromPlaylist(selectedPlaylist!!, track.uri)
+                        })
+                    }
+                }
+            }
+        }
     }
-    override fun onDestroy() { player.release(); db.close(); super.onDestroy() }
-}
 
-@Composable
-private fun MusicHome(
-    tracks: List<Track>, playingTrack: Track?, allCount: Int, tab: String, currentUri: String?, playing: Boolean,
-    position: Long, duration: Long, playMode: String, playlists: List<String>, selectedPlaylist: String?,
-    onTab: (String) -> Unit, onScan: () -> Unit, onPlay: (Track) -> Unit, onToggle: () -> Unit,
-    onNext: () -> Unit, onPrevious: () -> Unit, onMode: () -> Unit, onSeek: (Long) -> Unit,
-    onFavorite: (Track) -> Unit, onCategory: (Track, String) -> Unit,
-    onCreatePlaylist: (String) -> Unit, onAddPlaylist: (Track, String) -> Unit, onOpenPlaylist: (String) -> Unit
-) {
-    var editing by remember { mutableStateOf<Track?>(null) }
-    var creatingPlaylist by remember { mutableStateOf(false) }
-    var playlistName by remember { mutableStateOf("") }
-    var addingTrack by remember { mutableStateOf<Track?>(null) }
-    var targetTime by remember { mutableFloatStateOf(position.toFloat()) }
-    var dragging by remember { mutableStateOf(false) }
-    val current = playingTrack
-    Scaffold(
-        containerColor = Color(0xFF0B1010),
-        bottomBar = {
-            Column {
-                if (current != null) {
-                    Surface(color = Color(0xFF17211F), tonalElevation = 8.dp) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+    private fun playTrack(track: Track) {
+        val list = visibleTracks().ifEmpty { tracks.toList() }
+        connection.playOrToggle(list, track) { t -> db.state(t.uri).position }
+    }
+
+    /* ── 弹窗状态 ── */
+
+    private var editingTrack by mutableStateOf<Track?>(null)
+    private var addingTrack by mutableStateOf<Track?>(null)
+    private var showCreatePlaylist by mutableStateOf(false)
+    private var playlistName by mutableStateOf("")
+
+    @Composable
+    private fun Dialogs() {
+        editingTrack?.let { track ->
+            var chosen by remember(track.uri) { mutableStateOf(track.category) }
+            AlertDialog(
+                onDismissRequest = { editingTrack = null },
+                title = { Text("修改媒体分类") },
+                text = {
+                    Column {
+                        Text(track.title)
+                        Categories.ALL.forEach { item ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(current.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(current.artist, color = Color.LightGray, fontSize = 11.sp)
-                                }
-                                IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "上一首", tint = Color.White) }
-                                IconButton(onClick = onToggle) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, "播放暂停", tint = Color(GREEN)) }
-                                IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "下一首", tint = Color.White) }
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    IconButton(onClick = onMode) {
-                                        val modeIcon = when (playMode) {
-                                            "单曲循环" -> Icons.Default.RepeatOne
-                                            "随机播放" -> Icons.Default.Shuffle
-                                            else -> Icons.Default.Repeat
-                                        }
-                                        Icon(modeIcon, "播放模式：$playMode", tint = Color(GREEN))
-                                    }
-                                    Text(playMode, color = Color.LightGray, fontSize = 9.sp)
-                                }
-                            }
-                            Slider(value = (if (dragging) targetTime else position.toFloat()).coerceIn(0f, duration.coerceAtLeast(1L).toFloat()), onValueChange = { targetTime = it; dragging = true }, onValueChangeFinished = { onSeek(targetTime.toLong()); dragging = false }, valueRange = 0f..duration.coerceAtLeast(1L).toFloat())
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(timeText(if (dragging) targetTime.toLong() else position), color = Color.LightGray, fontSize = 10.sp)
-                                Text(timeText(duration), color = Color.LightGray, fontSize = 10.sp)
+                                RadioButton(selected = chosen == item, onClick = { chosen = item })
+                                Text(item)
                             }
                         }
                     }
-                }
-                NavigationBar(containerColor = Color(0xFF101817)) {
-                    listOf("全部" to Icons.Default.LibraryMusic, "收藏" to Icons.Default.Favorite, "历史" to Icons.Default.History, "歌单" to Icons.Default.QueueMusic).forEach { (name, icon) ->
-                        NavigationBarItem(selected = tab == name, onClick = { onTab(name) }, icon = { Icon(icon, null) }, label = { Text(name) })
-                    }
-                }
-            }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        db.setCategory(track.uri, chosen)
+                        updateTrack(track.uri) { it.copy(category = chosen) }
+                        editingTrack = null
+                    }) { Text("保存") }
+                },
+                dismissButton = { TextButton(onClick = { editingTrack = null }) { Text("取消") } },
+            )
         }
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            Spacer(Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("JIANG MUSIC", color = Color(GREEN), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                    Text(if (tab == "歌单" && selectedPlaylist != null) selectedPlaylist else tab, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text("已扫描 $allCount 个音频文件", color = Color.Gray, fontSize = 12.sp)
-                }
-                IconButton(onClick = onScan) { Icon(Icons.Default.Refresh, "重新扫描", tint = Color(GREEN)) }
-                if (tab == "歌单") IconButton(onClick = { creatingPlaylist = true }) { Icon(Icons.Default.Add, "新建歌单", tint = Color(GREEN)) }
-            }
-            if (tab == "全部") {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    categories.forEach { category ->
-                        FilterChip(selected = false, onClick = { onTab(category) }, label = { Text(category, fontSize = 11.sp) })
-                    }
-                }
-                Text("媒体库", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 10.dp))
-            }
-            if (tab == "歌单" && selectedPlaylist == null) {
-                playlists.forEach { name -> ListItem(headlineContent = { Text(name, color = Color.White) }, leadingContent = { Icon(Icons.Default.QueueMusic, null, tint = Color(GREEN)) }, modifier = Modifier.clickable { onOpenPlaylist(name) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent)) }
-                if (playlists.isEmpty()) Text("还没有歌单，点击右上角 + 创建", color = Color.Gray)
-            } else if (tracks.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.LibraryMusic, null, tint = Color.Gray, modifier = Modifier.size(48.dp)); Text("还没有扫描到音频", color = Color.White); Button(onClick = onScan) { Text("扫描本地音频") } } }
-            } else if (tracks.isNotEmpty()) {
-                LazyColumn(contentPadding = PaddingValues(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    items(tracks, key = { it.uri }) { track ->
-                        var menu by remember { mutableStateOf(false) }
-                        val selected = track.uri == currentUri
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (selected) Color(0xFF1A3029) else Color.Transparent).padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { onPlay(track) }) { Icon(if (selected && playing) Icons.Default.GraphicEq else Icons.Default.PlayArrow, null, tint = Color(GREEN)) }
-                            Column(Modifier.weight(1f).clickable { onPlay(track) }) {
-                                Text(track.title, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${track.artist} · ${track.category} · ${timeText(track.duration)}", color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            IconButton(onClick = { onFavorite(track) }) { Icon(Icons.Default.Favorite, "收藏", tint = if (track.favorite) Color(0xFFFF6B8A) else Color.Gray) }
-                            Box {
-                                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多", tint = Color.LightGray) }
-                                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                    DropdownMenuItem(text = { Text("修改分类") }, onClick = { menu = false; editing = track })
-                                    DropdownMenuItem(text = { Text("添加到歌单") }, onClick = { menu = false; addingTrack = track })
-                                }
-                            }
+        if (showCreatePlaylist) {
+            AlertDialog(
+                onDismissRequest = { showCreatePlaylist = false },
+                title = { Text("新建歌单") },
+                text = { OutlinedTextField(value = playlistName, onValueChange = { playlistName = it }, label = { Text("歌单名称") }) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (playlistName.isNotBlank()) {
+                            db.createPlaylist(playlistName.trim())
+                            refreshPlaylists()
+                        }
+                        playlistName = ""
+                        showCreatePlaylist = false
+                    }) { Text("创建") }
+                },
+                dismissButton = { TextButton(onClick = { showCreatePlaylist = false }) { Text("取消") } },
+            )
+        }
+        addingTrack?.let { track ->
+            AlertDialog(
+                onDismissRequest = { addingTrack = null },
+                title = { Text("添加到歌单") },
+                text = {
+                    Column {
+                        if (playlistNames.isEmpty()) Text("请先创建歌单")
+                        else playlistNames.forEach { name ->
+                            TextButton(onClick = {
+                                db.addToPlaylist(name, track.uri)
+                                addingTrack = null
+                            }) { Text(name) }
                         }
                     }
-                }
-            }
+                },
+                confirmButton = { TextButton(onClick = { addingTrack = null }) { Text("关闭") } },
+            )
         }
     }
-    editing?.let { track ->
-        var chosen by remember(track.uri) { mutableStateOf(track.category) }
-        AlertDialog(onDismissRequest = { editing = null }, title = { Text("修改媒体分类") }, text = {
-            Column { Text(track.title); categories.forEach { item -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = chosen == item, onClick = { chosen = item }); Text(item) } } }
-        }, confirmButton = { TextButton(onClick = { onCategory(track, chosen); editing = null }) { Text("保存") } }, dismissButton = { TextButton(onClick = { editing = null }) { Text("取消") } })
-    }
-    if (creatingPlaylist) AlertDialog(onDismissRequest = { creatingPlaylist = false }, title = { Text("新建歌单") }, text = { OutlinedTextField(value = playlistName, onValueChange = { playlistName = it }, label = { Text("歌单名称") }) }, confirmButton = { TextButton(onClick = { if (playlistName.isNotBlank()) onCreatePlaylist(playlistName.trim()); playlistName = ""; creatingPlaylist = false }) { Text("创建") } }, dismissButton = { TextButton(onClick = { creatingPlaylist = false }) { Text("取消") } })
-    addingTrack?.let { track ->
-        AlertDialog(onDismissRequest = { addingTrack = null }, title = { Text("添加到歌单") }, text = { Column { if (playlists.isEmpty()) Text("请先创建歌单") else playlists.forEach { name -> TextButton(onClick = { onAddPlaylist(track, name); addingTrack = null }) { Text(name) } } } }, confirmButton = { TextButton(onClick = { addingTrack = null }) { Text("关闭") } })
-    }
-}
-
-private fun timeText(ms: Long): String {
-    val seconds = ms.coerceAtLeast(0L) / 1000
-    return "%d:%02d".format(seconds / 60, seconds % 60)
 }
