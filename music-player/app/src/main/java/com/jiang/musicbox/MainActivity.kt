@@ -190,11 +190,11 @@ class MainActivity : ComponentActivity() {
 
     /* ── 设置读写 ── */
 
-    private fun setFontScale(v: Float) { fontScale = v; prefs.edit().putFloat("fontScale", v).apply() }
+    private fun changeFontScale(v: Float) { fontScale = v; prefs.edit().putFloat("fontScale", v).apply() }
     private fun setAccent(v: String) { accentName = v; prefs.edit().putString("accent", v).apply() }
-    private fun setThemeMode(v: String) { themeMode = v; prefs.edit().putString("themeMode", v).apply() }
+    private fun changeThemeMode(v: String) { themeMode = v; prefs.edit().putString("themeMode", v).apply() }
     private fun setRefreshRate(v: String) { refreshRatePref = v; prefs.edit().putString("refreshRate", v).apply(); applyRefreshRate(v) }
-    private fun setTitleSource(v: String) { titleSource = v; prefs.edit().putString("titleSource", v).apply(); scan() }
+    private fun changeTitleSource(v: String) { titleSource = v; prefs.edit().putString("titleSource", v).apply(); scan() }
     private fun resetWallpaper() {
         wallpaperPath?.let { File(it).delete() }
         wallpaperPath = null
@@ -422,15 +422,15 @@ class MainActivity : ComponentActivity() {
         if (showSettings) {
             SettingsScreen(
                 fontScale = fontScale,
-                onFontScale = ::setFontScale,
+                onFontScale = ::changeFontScale,
                 accentName = accentName,
                 onAccent = ::setAccent,
                 themeMode = themeMode,
-                onThemeMode = ::setThemeMode,
+                onThemeMode = ::changeThemeMode,
                 refreshRate = refreshRatePref,
                 onRefreshRate = ::setRefreshRate,
                 titleSource = titleSource,
-                onTitleSource = ::setTitleSource,
+                onTitleSource = ::changeTitleSource,
                 hasWallpaper = wallpaperPath != null,
                 onPickWallpaper = {
                     wallpaperLauncher.launch(
