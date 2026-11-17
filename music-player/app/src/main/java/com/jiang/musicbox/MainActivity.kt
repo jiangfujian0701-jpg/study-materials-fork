@@ -368,7 +368,7 @@ class MainActivity : ComponentActivity() {
         AppTheme(themeMode, accentName) {
             val base = LocalDensity.current
             val scaled = Density(base.density, fontScale)
-            CompositionLocalProvider(scaled) {
+            CompositionLocalProvider(LocalDensity provides scaled) {
                 val scheme = MaterialTheme.colorScheme
                 Box(Modifier.fillMaxSize()) {
                     // 背景层：壁纸（垫半透明底保证可读）或纯主题色
