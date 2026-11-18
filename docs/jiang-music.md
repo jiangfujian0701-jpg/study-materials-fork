@@ -1,6 +1,6 @@
 # Jiang Music 架构说明（0.3.0）
 
-江的音乐是本仓库的 Android 本地音乐播放器（Kotlin + Jetpack Compose + media3 1.5.1），
+江的音乐是本仓库的 Android 本地音乐播放器（Kotlin + Jetpack Compose + media3 1.4.1），
 与主应用（HGhub，Tauri）相互独立，位于 `music-player/`，由
 `.github/workflows/music-player-apk.yml` 自动构建 debug APK。
 
@@ -45,3 +45,20 @@ SD 卡重新挂载后可能变化。数据库以 `(bucket, docId)` 为主键（v
 - 封面取 `content://media/external/audio/albumart/<albumId>`，文件缺内嵌封面且系统
   没建 albumart 条目时显示占位图标。
 - Issues 在仓库层面禁用；反馈请走 PR 或仓库主页渠道。
+
+## 本机构建（手机 proot 环境）
+
+工具链装在 `/opt`：JDK 17（apt）、Gradle 8.11.1、Android SDK（platform-34 +
+build-tools 34.0.4）。aarch64 设备没有官方 aapt2，使用 AndroidIDE 的 34.0.4 构建
+（aapt2/zipalign 已覆盖进 `build-tools/34.0.4`，`android.aapt2FromMavenOverride`
+在用户级 `~/.gradle/gradle.properties` 指向它，均不进仓库）。
+
+因此项目锁定 `compileSdk 34 + buildToolsVersion 34.0.4`，依赖用接受 34 的版本
+（media3 1.4.1、activity-compose 1.9.3）。CI（x86）同样兼容这套配置。
+
+构建命令：
+
+```bash
+source /root/android-env.sh
+/opt/gradle-8.11.1/bin/gradle -p music-player :app:assembleDebug --no-daemon
+```

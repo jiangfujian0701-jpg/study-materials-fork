@@ -31,3 +31,9 @@ docs/API.md
 
 # Agent instructions (local)
 AGENTS.md
+
+# Android 构建产物（music-player）
+music-player/.gradle/
+music-player/build/
+music-player/app/build/
+music-player/local.properties
